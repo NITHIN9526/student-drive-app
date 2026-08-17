@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getDb, initDb } from "@/lib/db";
 import { saveUpload, deleteUpload } from "@/lib/files";
 import type { Material, MaterialType } from "@/lib/types";
 
@@ -14,23 +14,33 @@ function getString(field: string): string {
   return "";
 }
 
+async function getMaterial(id: number): Promise<Material | undefined> {
+  const db = getDb();
+  const { rows } = await db.execute({
+    sql: "SELECT * FROM materials WHERE id = ?",
+    args: [id],
+  });
+  return rows[0] as unknown as Material | undefined;
+}
+
 export async function GET(_req: NextRequest, { params }: Ctx) {
+  await initDb();
   const { id } = await params;
-  const row = db.prepare("SELECT * FROM materials WHERE id = ?").get(Number(id)) as
-    | Material
-    | undefined;
+  const row = await getMaterial(Number(id));
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(row);
 }
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
-  const { id } = await params;
-  const existing = db.prepare("SELECT * FROM materials WHERE id = ?").get(Number(id)) as
-    | Material
-    | undefined;
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  try {
+    await initDb();
+    const db = getDb();
+    const { id } = await params;
+    const existing = await getMaterial(Number(id));
+    if (!existing)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const contentType = req.headers.get("content-type") || "";
+    const contentType = req.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
 
   let title: string | undefined;
@@ -94,36 +104,44 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 
   const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE materials
+  await db.execute({
+    sql: `UPDATE materials
        SET title = ?, type = ?, subject = ?, content = ?, url = ?,
            file_name = ?, file_path = ?, file_size = ?, favorite = ?, updated_at = ?
-     WHERE id = ?`
-  ).run(
-    finalTitle,
-    finalType,
-    finalSubject,
-    finalContent || null,
-    finalUrl || null,
-    fileName,
-    filePath,
-    fileSize,
-    finalFavorite,
-    now,
-    Number(id)
-  );
+     WHERE id = ?`,
+    args: [
+      finalTitle,
+      finalType,
+      finalSubject,
+      finalContent || null,
+      finalUrl || null,
+      fileName,
+      filePath,
+      fileSize,
+      finalFavorite,
+      now,
+      Number(id),
+    ],
+  });
 
-  const row = db.prepare("SELECT * FROM materials WHERE id = ?").get(Number(id));
+  const row = await getMaterial(Number(id));
   return NextResponse.json(row);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Update failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
+  await initDb();
+  const db = getDb();
   const { id } = await params;
-  const existing = db.prepare("SELECT * FROM materials WHERE id = ?").get(Number(id)) as
-    | Material
-    | undefined;
+  const existing = await getMaterial(Number(id));
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (existing.file_path) await deleteUpload(existing.file_path);
-  db.prepare("DELETE FROM materials WHERE id = ?").run(Number(id));
+  await db.execute({
+    sql: "DELETE FROM materials WHERE id = ?",
+    args: [Number(id)],
+  });
   return NextResponse.json({ ok: true });
 }

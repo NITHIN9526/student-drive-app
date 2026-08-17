@@ -18,6 +18,8 @@ const ACCEPT: Partial<Record<MaterialType, string>> = {
   file: "",
 };
 
+const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB — Vercel's serverless body limit is ~4.5 MB
+
 export default function MaterialModal({ open, initial, onClose, onSaved }: MaterialModalProps) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [type, setType] = useState<MaterialType>(initial?.type ?? "notes");
@@ -56,6 +58,13 @@ export default function MaterialModal({ open, initial, onClose, onSaved }: Mater
     if (file) form.set("file", file);
     if (isEdit && removeFile) form.set("removeFile", "1");
 
+    if (file && file.size > MAX_FILE_SIZE) {
+      setError(
+        `That file is ${formatBytes(file.size)}. Vercel's free plan allows uploads up to 4 MB — try a smaller file.`
+      );
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
@@ -63,9 +72,17 @@ export default function MaterialModal({ open, initial, onClose, onSaved }: Mater
         isEdit ? `/api/materials/${initial!.id}` : "/api/materials",
         { method: isEdit ? "PATCH" : "POST", body: form }
       );
-      const data = await res.json();
+      let data: { error?: string } | null = null;
+      try {
+        data = await res.json();
+      } catch {
+        /* non-JSON error body */
+      }
       if (!res.ok) {
-        setError(data.error || "Something went wrong. Try again.");
+        setError(
+          data?.error ||
+            `Upload failed (${res.status}). Check that your storage is configured.`
+        );
         setSaving(false);
         return;
       }

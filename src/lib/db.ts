@@ -1,55 +1,50 @@
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
+import { createClient } from "@libsql/client";
+import type { Client } from "@libsql/client";
 
-const globalForDb = globalThis as unknown as { sdDb?: DatabaseSync };
+let client: Client | undefined;
+let initPromise: Promise<void> | undefined;
 
-function createDb(): DatabaseSync {
-  const dataDir = path.join(process.cwd(), "data");
-  mkdirSync(dataDir, { recursive: true });
-
-  const db = new DatabaseSync(path.join(dataDir, "students-drive.db"));
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000");
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS materials (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      type TEXT NOT NULL,
-      subject TEXT NOT NULL DEFAULT 'General',
-      content TEXT,
-      url TEXT,
-      file_name TEXT,
-      file_path TEXT,
-      file_size INTEGER,
-      favorite INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `);
-
-  seed(db);
-
-  return db;
+export function getDb(): Client {
+  if (!client) {
+    const url = process.env.TURSO_DATABASE_URL;
+    if (!url) {
+      throw new Error("TURSO_DATABASE_URL is not set. Add it to your .env.local");
+    }
+    client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+  }
+  return client;
 }
 
-function seed(db: DatabaseSync): void {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const { count } = db.prepare("SELECT COUNT(*) AS count FROM materials").get() as {
-      count: number;
-    };
-    if (count > 0) {
-      db.exec("COMMIT");
-      return;
-    }
+/**
+ * Creates the schema and seeds sample data the first time it runs.
+ * Safe to call from every request handler: it is lazy (never runs at build
+ * time) and deduplicated across concurrent calls within a serverless instance.
+ */
+export async function initDb(): Promise<void> {
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    const db = getDb();
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL DEFAULT 'General',
+        content TEXT,
+        url TEXT,
+        file_name TEXT,
+        file_path TEXT,
+        file_size INTEGER,
+        favorite INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
 
-    const now = Date.now();
-    const insert = db.prepare(
-      `INSERT INTO materials (title, type, subject, content, url, favorite, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+    const { rows } = await db.execute("SELECT COUNT(*) AS count FROM materials");
+    const count = Number(rows[0]?.count ?? 0);
+    if (count > 0) return;
+
     const samples: [string, string, string, string, string, number][] = [
       [
         "Calculus: Integration techniques",
@@ -87,27 +82,22 @@ function seed(db: DatabaseSync): void {
         "Essay writing template",
         "notes",
         "English",
-        "Introductory paragraph:\n- Hook to grab the reader's attention.\n- Background context.\n- Thesis statement (your main argument).\n\nBody paragraphs:\n- Topic sentence, evidence, analysis (PEA).\n- One idea per paragraph.\n- Quote then explain how it supports your thesis.\n\nConclusion:\n- Restate the thesis in new words.\n- Summarise key points.\n- End with a thought-provoking final line.",
+        "Introductory paragraph:\n- Hook to grab the reader's attention.\n- Background context.\n- Thesis statement (your main argument).\n\nBody paragraphs:\n- Topic sentence, evidence, analysis (PEA).\n- One idea per paragraph.\n\nConclusion:\n- Restate the thesis in new words.\n- Summarise key points.\n- End with a thought-provoking final line.",
         "",
         0,
       ],
     ];
-    samples.forEach((sample, i) => {
+
+    const now = Date.now();
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
       const t = new Date(now - i * 86_400_000).toISOString();
-      insert.run(sample[0], sample[1], sample[2], sample[3] || null, sample[4] || null, sample[5], t, t);
-    });
-
-    db.exec("COMMIT");
-  } catch (err) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      /* ignore */
+      await db.execute({
+        sql: `INSERT INTO materials (title, type, subject, content, url, favorite, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [s[0], s[1], s[2], s[3] || null, s[4] || null, s[5], t, t],
+      });
     }
-    throw err;
-  }
+  })();
+  return initPromise;
 }
-
-export const db = globalForDb.sdDb ?? createDb();
-
-if (process.env.NODE_ENV !== "production") globalForDb.sdDb = db;

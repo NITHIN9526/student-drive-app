@@ -93,7 +93,7 @@ export default function Home() {
     } else if (m.url) {
       window.open(m.url, "_blank", "noopener");
     } else if (m.file_path) {
-      window.open(`/api/files/${m.file_path}`, "_blank", "noopener");
+      window.open(m.file_path, "_blank", "noopener");
     }
   }
 

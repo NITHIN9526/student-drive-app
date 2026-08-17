@@ -29,7 +29,7 @@ export default function MaterialCard({
   const thumb = material.type === "video" ? youtubeId(material.url) : null;
   const imageSrc =
     material.type === "image" && material.file_path
-      ? `/api/files/${material.file_path}`
+      ? material.file_path
       : null;
   const isFavorite = material.favorite === 1;
   const [coverFailed, setCoverFailed] = useState(false);
@@ -41,7 +41,7 @@ export default function MaterialCard({
     >
       <div className="relative h-36 overflow-hidden">
         {imageSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element -- covers are served from a dynamic /api/files route
+          // eslint-disable-next-line @next/next/no-img-element -- image covers are Vercel Blob URLs
           <img
             src={imageSrc}
             alt={material.title}
