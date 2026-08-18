@@ -12,11 +12,6 @@ export interface UploadInfo {
  * The returned URL is persisted in the `file_path` column.
  */
 export async function saveUpload(file: File): Promise<UploadInfo> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    throw new Error(
-      "File storage is not configured yet. Connect a Vercel Blob store to your project (or add BLOB_READ_WRITE_TOKEN to your .env.local)."
-    );
-  }
   const ext = file.name.includes(".")
     ? "." + file.name.split(".").pop()!.toLowerCase().slice(0, 10)
     : "";
